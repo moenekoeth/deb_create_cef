@@ -1,0 +1,98 @@
+image: 
+  name: hashicorp/packer:latest
+  entrypoint: [""]
+
+services:
+  - name: docker:dind
+    alias: docker
+
+before_script:
+  - apk update
+  - apk add --no-cache docker
+  - apk add --no-cache git
+  - apk add --no-cache bash
+
+
+variables:
+  #DOCKER_REG_LOGIN_NAME: "${DOCKER_REG_LOGIN_NAME}"
+  #DOCKER_REG_LOGIN_PASSWORD: "${DOCKER_REG_LOGIN_PASSWORD}"
+  #DOCKER_REG_LOGIN_SERVER: "${DOCKER_REG_LOGIN_SERVER}" 
+  #DOCKER_REG_LOGIN_BASE: "${DOCKER_REG_LOGIN_BASE}" 
+  #DOCKER_REG_LOGIN_PULL: "true"
+  #CEF_DEB_IMAGE_USE_COMPRESSION: "true"
+  #CEF_DEB_REMOVE_SRC_IN_FINAL: "false"
+  THIS_CI_COMMIT_TAG: "${CI_COMMIT_TAG}"
+  #CACHED_CHROME_SRC_DIR: "${CACHED_CHROME_SRC_DIR}"
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  # Recommended for dind performance
+  FF_NETWORK_PER_BUILD: "true"
+  DOCKER_BUILDKIT: "1"
+
+stages:
+  - check-options
+  - prepare-builder
+  - prepare-source
+  - build
+  - package
+
+verify-options-set:
+  stage: check-options
+  script:
+    # Only run if DOCKER_REG_* variables are set
+    - echo "${DOCKER_REG_LOGIN_NAME}"
+    - |
+      if [[ "${DOCKER_REG_LOGIN_NAME}" == "" ]]; then
+        echo "Define 'DOCKER_REG_*' to run the pipeline!"
+        exit 1
+        else
+        echo "Starting for release $CI_COMMIT_TAG"
+      fi
+  only:
+    - tags
+
+
+prepare-base-image:
+  stage: prepare-builder
+  script:
+    # Create a base builder image off of debian:bullseye
+    # install required build tools
+    - packer init builder.pkr.hcl
+    - packer validate builder.pkr.hcl
+    - packer build builder.pkr.hcl
+  only:
+    - tags
+
+prepare-source-image:
+  stage: prepare-source
+  script:
+    # Build on the previous image, 
+    # download and prepare chromium cef source
+    - packer init packer.pkr.hcl
+    - packer validate packer.pkr.hcl
+    - packer build packer.pkr.hcl
+  only:
+    - tags
+
+build-cef:
+  stage: build
+  script:
+    # Build on the previous image, 
+    # use downloaded source to compile cef
+    - packer init compiler.pkr.hcl
+    - packer validate compiler.pkr.hcl
+    - packer build compiler.pkr.hcl
+  only:
+    - tags
+
+package:
+  stage: package
+  script:
+    - echo 'exporting build'
+  artifacts:
+    paths:
+      - /output/cef-minimal-x64.tar.bz2
+    expire_in: 1 month
+  only:
+    - tags
